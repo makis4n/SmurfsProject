@@ -1,7 +1,14 @@
-import React, { useEffect, useState } from "react";
-import { View, Text, FlatList, Image, TouchableOpacity, StyleSheet } from "react-native";
 import * as MediaLibrary from "expo-media-library";
 import { router } from "expo-router";
+import React, { useEffect, useState } from "react";
+import {
+  FlatList,
+  Image,
+  StyleSheet,
+  Text,
+  TouchableOpacity,
+  View,
+} from "react-native";
 
 export default function Photos() {
   const [photos, setPhotos] = useState<MediaLibrary.Asset[]>([]);
@@ -58,10 +65,13 @@ export default function Photos() {
       numColumns={3}
       renderItem={({ item }) => (
         <TouchableOpacity
-          onPress={() => router.push({
-            pathname: "../screens/[assetId]",
-            params: { assetId: item.id }
-          })}>
+          onPress={() =>
+            router.push({
+              pathname: "../screens/[assetId]",
+              params: { assetId: item.id },
+            })
+          }
+        >
           <Image source={{ uri: uris[item.id] }} style={styles.image} />
         </TouchableOpacity>
       )}
