@@ -10,7 +10,7 @@ export default function Index() {
         alignItems: "center",
       }}
     >
-      <TouchableOpacity onPress={() => router.replace("./frontend/(tabs)/camera")}>
+      <TouchableOpacity onPress={() => router.replace("./frontend/(tabs)/Ocr")}>
         <Text>Get Started</Text>
       </TouchableOpacity>
     </View>
