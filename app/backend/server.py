@@ -4,8 +4,8 @@ from transformers import AutoTokenizer, AutoModelForTokenClassification, pipelin
 
 app = FastAPI()
 
-tokenizer = AutoTokenizer.from_pretrained("dslim/distilbert-NER")
-model = AutoModelForTokenClassification.from_pretrained("dslim/distilbert-NER")
+tokenizer = AutoTokenizer.from_pretrained("iiiorg/piiranha-v1-detect-personal-information")
+model = AutoModelForTokenClassification.from_pretrained("iiiorg/piiranha-v1-detect-personal-information")
 
 nlp = pipeline("ner", model=model, tokenizer=tokenizer)
 
@@ -16,14 +16,31 @@ class InputText(BaseModel):
 def ner_endpoint(input: InputText):
     raw_results = nlp(input.text)
     results = []
+    current_entity = None
+
     for r in raw_results:
-      results.append({
-        "entity": str(r["entity"]),
-        "score": float(r["score"]),
-        "index": int(r["index"]),
-        "word": str(r["word"]),
-        "start": int(r["start"]),
-        "end": int(r["end"])
-      })
-    print(results)
+      entity = r["entity"].split("-")[-1]  # e.g. "I-USERNAME" -> "USERNAME"
+      word = r["word"].replace("▁", "")   # remove special tokens like ▁
+
+      if current_entity and current_entity["entity"] == entity:
+        # continue same entity
+        current_entity["word"] += word
+        current_entity["end"] = int(r["end"])
+        current_entity["score"] = (current_entity["score"] + float(r["score"])) / 2
+
+      else:
+        # start new entity
+        if current_entity:
+          results.append(current_entity)
+        current_entity = {
+          "entity": entity,
+          "word": word,
+          "score": float(r["score"]),
+          "start": int(r["start"]),
+          "end": int(r["end"]),
+        }
+
+    if current_entity:
+      results.append(current_entity)
+
     return {"entities": results}

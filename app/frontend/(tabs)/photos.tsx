@@ -1,4 +1,5 @@
 import * as MediaLibrary from "expo-media-library";
+import { router } from "expo-router";
 import React, { useEffect, useState } from "react";
 import {
   FlatList,
@@ -63,7 +64,14 @@ export default function Photos() {
       keyExtractor={(item) => item.id}
       numColumns={3}
       renderItem={({ item }) => (
-        <TouchableOpacity>
+        <TouchableOpacity
+          onPress={() =>
+            router.push({
+              pathname: "../screens/[assetId]",
+              params: { assetId: item.id },
+            })
+          }
+        >
           <Image source={{ uri: uris[item.id] }} style={styles.image} />
         </TouchableOpacity>
       )}
