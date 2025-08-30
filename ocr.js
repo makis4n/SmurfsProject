@@ -1,21 +1,3 @@
-// const Tesseract = require('tesseract.js');
-
-// // Path to the image you want to extract text from
-// const imagePath = './randomimage.png';  // Reference the image in the root directory
-
-// // Run Tesseract.js OCR
-// Tesseract.recognize(
-//   imagePath,
-//   'eng',  // Language code ('eng' for English)
-//   {
-//     logger: (m) => console.log(m),  // Optional: log progress
-//   }
-// ).then(({ data: { text } }) => {
-//   console.log('Extracted Text:', text);
-// }).catch((error) => {
-//   console.error('OCR Error:', error);
-// });
-
 const Tesseract = require('tesseract.js');
 const fs = require('fs');  // File System module to write to files
 
