@@ -11,6 +11,9 @@ import {
   View,
 } from "react-native";
 import WebView, { WebViewMessageEvent } from "react-native-webview";
+import { BlurView } from "expo-blur";
+import { captureRef } from "react-native-view-shot";
+import * as MediaLibrary from "expo-media-library";
 import { runNER } from "../services/ner";
 
 type OCRBox = {
@@ -52,10 +55,85 @@ type BridgeMsg =
   | { ok: false; error: string };
 
 export default function Ocr() {
+  // UI state + a ref so we can export a redacted PNG
   const webviewRef = useRef<WebView>(null);
   const [imageUri, setImageUri] = useState<string | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
+  const redactionRef = useRef<View>(null);
+  const [showBlur, setShowBlur] = useState(true);
+  const [containerW, setContainerW] = useState(0);
+  const containerH = 220; // matches your <Image> height
 
+  const MIN_ENTITY_SCORE = 0.85;
+  const SENSITIVE_CATEGORIES = new Set([
+    "ACCOUNTNUM","BUILDINGNUM","CITY","CREDITCARDNUMBER","DATEOFBIRTH",
+    "DRIVERLICENSENUM","EMAIL","GIVENNAME","IDCARDNUM","PASSWORD","SOCIALNUM",
+    "STREET","SURNAME","TAXNUM","TELEPHONENUM","USERNAME","ZIPCODE"
+  ]);
+
+  function isSensitiveBox(b: OCRBoxWithNER) {
+    if (!b.entities || b.entities.length === 0) return false;
+    return b.entities.some(
+      (e) => SENSITIVE_CATEGORIES.has(e.entity) && (e.score ?? 0) >= MIN_ENTITY_SCORE
+    );
+  } 
+
+  // Compute the displayed image rectangle for resizeMode="contain"
+  function computeDisplayedRect(
+    containerW: number,
+    containerH: number,
+    imageW: number,
+    imageH: number
+  ) {
+    if (!imageW || !imageH) return { displayedW: containerW, displayedH: containerH, offsetX: 0, offsetY: 0 };
+    const imgR = imageW / imageH;
+    const boxR = containerW / containerH;
+    if (imgR > boxR) {
+      const displayedW = containerW;
+      const displayedH = displayedW / imgR;
+      return { displayedW, displayedH, offsetX: 0, offsetY: (containerH - displayedH) / 2 };
+    } else {
+      const displayedH = containerH;
+      const displayedW = displayedH * imgR;
+      return { displayedW, displayedH, offsetX: (containerW - displayedW) / 2, offsetY: 0 };
+    }
+  }
+
+  // Map original image pixels -> on-screen coords (with letterbox offsets)
+  function projectBox(
+    bbox: OCRBox["bbox"],
+    imgSize: { width: number; height: number },
+    containerW: number,
+    containerH: number
+  ) {
+    const { displayedW, displayedH, offsetX, offsetY } = computeDisplayedRect(
+      containerW, containerH, imgSize.width, imgSize.height
+    );
+    const sx = displayedW / imgSize.width;
+    const sy = displayedH / imgSize.height;
+
+    // Optional padding to ensure full coverage around glyphs
+    const pad = 2; // px in *display* space
+    const left = offsetX + bbox.x0 * sx - pad;
+    const top = offsetY + bbox.y0 * sy - pad;
+    const width = (bbox.x1 - bbox.x0) * sx + pad * 2;
+    const height = (bbox.y1 - bbox.y0) * sy + pad * 2;
+    return { left, top, width, height };
+  }
+
+  // Export the redacted composite (image + overlays) as a PNG
+  const saveRedacted = async () => {
+    try {
+      const uri = await captureRef(redactionRef, { format: "png", quality: 1, result: "tmpfile" });
+      const { status } = await MediaLibrary.requestPermissionsAsync();
+      if (status !== "granted") throw new Error("No media library permission");
+      await MediaLibrary.saveToLibraryAsync(uri);
+      Alert.alert("Saved", "Redacted image saved to your photos.");
+    } catch (e: any) {
+      Alert.alert("Save failed", String(e));
+    }
+  };
+  
   // Store full OCR results (text + bounding boxes)
   const [results, setResults] = useState<OCRResultWithNER | null>(null);
 
@@ -238,15 +316,54 @@ export default function Ocr() {
 
       <Button title="Pick image" onPress={pickImage} />
       {imageUri ? (
-        <Image
-          source={{ uri: imageUri }}
-          style={{
-            width: "100%",
-            height: 220,
-            resizeMode: "contain",
-            borderRadius: 12,
-          }}
-        />
+        <View
+          ref={redactionRef}
+          onLayout={(e) => setContainerW(e.nativeEvent.layout.width)}
+          style={{ width: "100%" }}
+        >
+          <View style={{ width: "100%", height: 220 }}>
+          {imageUri ? (
+            <>
+              <Image
+                source={{ uri: imageUri }}
+                style={{ width: "100%", height: "100%", borderRadius: 12 }}
+                resizeMode="contain"
+              />
+              {/* Blur overlays */}
+              {showBlur && results && results.boxes
+                .filter(isSensitiveBox)
+                .map((b, idx) => {
+                  const rect = projectBox(b.bbox, results.imageSize, containerW, containerH);
+                  return (
+                    <BlurView
+                      key={idx}
+                      intensity={65}         // raise if you want stronger blur
+                      tint="dark"
+                      style={{
+                        position: "absolute",
+                        left: rect.left,
+                        top: rect.top,
+                        width: rect.width,
+                        height: rect.height,
+                        borderRadius: 4,
+                        overflow: "hidden",
+                      }}
+                      pointerEvents="none"
+                    />
+                  );
+                })}
+            </>
+          ) : (
+            <Text style={{ opacity: 0.7 }}>No image selected</Text>
+          )}
+        </View>
+
+        {/* Controls */}
+        <View style={{ flexDirection: "row", gap: 12, marginTop: 10 }}>
+          <Button title={showBlur ? "Hide blur" : "Show blur"} onPress={() => setShowBlur((s) => !s)} />
+          <Button title="Save redacted PNG" onPress={saveRedacted} />
+        </View>
+      </View>
       ) : (
         <Text style={{ opacity: 0.7 }}>No image selected</Text>
       )}
