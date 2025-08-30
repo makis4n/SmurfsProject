@@ -1,19 +1,21 @@
+import { BlurView } from "expo-blur";
 import * as FileSystem from "expo-file-system";
 import * as ImagePicker from "expo-image-picker";
+import * as MediaLibrary from "expo-media-library";
 import React, { useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
-  Button,
-  FlatList,
+  Dimensions,
   Image,
+  Pressable,
+  SafeAreaView,
+  StyleSheet,
   Text,
   View,
 } from "react-native";
-import WebView, { WebViewMessageEvent } from "react-native-webview";
-import { BlurView } from "expo-blur";
 import { captureRef } from "react-native-view-shot";
-import * as MediaLibrary from "expo-media-library";
+import WebView, { WebViewMessageEvent } from "react-native-webview";
 import { runNER } from "../services/ner";
 
 type OCRBox = {
@@ -62,21 +64,36 @@ export default function Ocr() {
   const redactionRef = useRef<View>(null);
   const [showBlur, setShowBlur] = useState(true);
   const [containerW, setContainerW] = useState(0);
-  const containerH = 220; // matches your <Image> height
+  const containerH = 280; // matches your <Image> height
 
   const MIN_ENTITY_SCORE = 0.85;
   const SENSITIVE_CATEGORIES = new Set([
-    "ACCOUNTNUM","BUILDINGNUM","CITY","CREDITCARDNUMBER","DATEOFBIRTH",
-    "DRIVERLICENSENUM","EMAIL","GIVENNAME","IDCARDNUM","PASSWORD","SOCIALNUM",
-    "STREET","SURNAME","TAXNUM","TELEPHONENUM","USERNAME","ZIPCODE"
+    "ACCOUNTNUM",
+    "BUILDINGNUM",
+    "CITY",
+    "CREDITCARDNUMBER",
+    "DATEOFBIRTH",
+    "DRIVERLICENSENUM",
+    "EMAIL",
+    "GIVENNAME",
+    "IDCARDNUM",
+    "PASSWORD",
+    "SOCIALNUM",
+    "STREET",
+    "SURNAME",
+    "TAXNUM",
+    "TELEPHONENUM",
+    "USERNAME",
+    "ZIPCODE",
   ]);
 
   function isSensitiveBox(b: OCRBoxWithNER) {
     if (!b.entities || b.entities.length === 0) return false;
     return b.entities.some(
-      (e) => SENSITIVE_CATEGORIES.has(e.entity) && (e.score ?? 0) >= MIN_ENTITY_SCORE
+      (e) =>
+        SENSITIVE_CATEGORIES.has(e.entity) && (e.score ?? 0) >= MIN_ENTITY_SCORE
     );
-  } 
+  }
 
   // Compute the displayed image rectangle for resizeMode="contain"
   function computeDisplayedRect(
@@ -85,17 +102,33 @@ export default function Ocr() {
     imageW: number,
     imageH: number
   ) {
-    if (!imageW || !imageH) return { displayedW: containerW, displayedH: containerH, offsetX: 0, offsetY: 0 };
+    if (!imageW || !imageH)
+      return {
+        displayedW: containerW,
+        displayedH: containerH,
+        offsetX: 0,
+        offsetY: 0,
+      };
     const imgR = imageW / imageH;
     const boxR = containerW / containerH;
     if (imgR > boxR) {
       const displayedW = containerW;
       const displayedH = displayedW / imgR;
-      return { displayedW, displayedH, offsetX: 0, offsetY: (containerH - displayedH) / 2 };
+      return {
+        displayedW,
+        displayedH,
+        offsetX: 0,
+        offsetY: (containerH - displayedH) / 2,
+      };
     } else {
       const displayedH = containerH;
       const displayedW = displayedH * imgR;
-      return { displayedW, displayedH, offsetX: (containerW - displayedW) / 2, offsetY: 0 };
+      return {
+        displayedW,
+        displayedH,
+        offsetX: (containerW - displayedW) / 2,
+        offsetY: 0,
+      };
     }
   }
 
@@ -107,7 +140,10 @@ export default function Ocr() {
     containerH: number
   ) {
     const { displayedW, displayedH, offsetX, offsetY } = computeDisplayedRect(
-      containerW, containerH, imgSize.width, imgSize.height
+      containerW,
+      containerH,
+      imgSize.width,
+      imgSize.height
     );
     const sx = displayedW / imgSize.width;
     const sy = displayedH / imgSize.height;
@@ -124,7 +160,11 @@ export default function Ocr() {
   // Export the redacted composite (image + overlays) as a PNG
   const saveRedacted = async () => {
     try {
-      const uri = await captureRef(redactionRef, { format: "png", quality: 1, result: "tmpfile" });
+      const uri = await captureRef(redactionRef, {
+        format: "png",
+        quality: 1,
+        result: "tmpfile",
+      });
       const { status } = await MediaLibrary.requestPermissionsAsync();
       if (status !== "granted") throw new Error("No media library permission");
       await MediaLibrary.saveToLibraryAsync(uri);
@@ -133,7 +173,7 @@ export default function Ocr() {
       Alert.alert("Save failed", String(e));
     }
   };
-  
+
   // Store full OCR results (text + bounding boxes)
   const [results, setResults] = useState<OCRResultWithNER | null>(null);
 
@@ -301,106 +341,594 @@ export default function Ocr() {
   };
 
   return (
-    <View style={{ flex: 1, padding: 16, gap: 12 }}>
-      {/* Hidden worker */}
+    <SafeAreaView style={styles.container}>
+      {/* Header */}
+      <View style={styles.header}>
+        <View style={styles.headerIcon}>
+          <Text style={styles.headerIconText}>🔒</Text>
+        </View>
+        <Text style={styles.title}>Smart Redactor</Text>
+        <Text style={styles.subtitle}>
+          Automatically detect and blur sensitive information in images
+        </Text>
+      </View>
+
+      {/* Image Upload Section */}
+      {!imageUri ? (
+        <Pressable style={styles.uploadArea} onPress={pickImage}>
+          <View style={styles.uploadContent}>
+            <View style={styles.uploadIconContainer}>
+              <Text style={styles.uploadIcon}>📷</Text>
+            </View>
+            <Text style={styles.uploadTitle}>Select Image</Text>
+            <Text style={styles.uploadDescription}>
+              Choose an image to scan for sensitive information
+            </Text>
+            <View style={styles.uploadButton}>
+              <Text style={styles.uploadButtonText}>Browse Photos</Text>
+            </View>
+          </View>
+        </Pressable>
+      ) : (
+        <View style={styles.imageSection}>
+          {/* Image Display */}
+          <View style={styles.imageHeader}>
+            <Text style={styles.sectionTitle}>Selected Image</Text>
+            <Pressable style={styles.changeButton} onPress={pickImage}>
+              <Text style={styles.changeButtonText}>Change</Text>
+            </Pressable>
+          </View>
+
+          <View
+            ref={redactionRef}
+            onLayout={(e) => setContainerW(e.nativeEvent.layout.width)}
+            style={styles.imageContainer}
+          >
+            <View style={styles.imageWrapper}>
+              <Image
+                source={{ uri: imageUri }}
+                style={styles.selectedImage}
+                resizeMode="contain"
+              />
+
+              {/* Blur overlays for sensitive content */}
+              {showBlur &&
+                results &&
+                results.boxes.filter(isSensitiveBox).map((b, idx) => {
+                  const rect = projectBox(
+                    b.bbox,
+                    results.imageSize,
+                    containerW,
+                    containerH
+                  );
+                  return (
+                    <BlurView
+                      key={idx}
+                      intensity={80}
+                      tint="dark"
+                      style={[
+                        styles.blurOverlay,
+                        {
+                          left: rect.left,
+                          top: rect.top,
+                          width: rect.width,
+                          height: rect.height,
+                        },
+                      ]}
+                      pointerEvents="none"
+                    />
+                  );
+                })}
+            </View>
+          </View>
+
+          {/* Action Buttons */}
+          <View style={styles.actionSection}>
+            <Pressable
+              style={[
+                styles.primaryButton,
+                isProcessing && styles.buttonDisabled,
+              ]}
+              onPress={runOCR}
+              disabled={isProcessing}
+            >
+              {isProcessing ? (
+                <View style={styles.loadingContent}>
+                  <ActivityIndicator size="small" color="#ffffff" />
+                  <Text style={styles.buttonText}>Analyzing...</Text>
+                </View>
+              ) : (
+                <View style={styles.buttonContent}>
+                  <Text style={styles.buttonIcon}>🔍</Text>
+                  <Text style={styles.buttonText}>Scan & Redact</Text>
+                </View>
+              )}
+            </Pressable>
+
+            {results && (
+              <View style={styles.controlsRow}>
+                <Pressable
+                  style={[
+                    styles.secondaryButton,
+                    !showBlur && styles.secondaryButtonActive,
+                  ]}
+                  onPress={() => setShowBlur(!showBlur)}
+                >
+                  <Text style={styles.secondaryButtonIcon}>
+                    {showBlur ? "👁️" : "🙈"}
+                  </Text>
+                  <Text
+                    style={[
+                      styles.secondaryButtonText,
+                      !showBlur && styles.secondaryButtonTextActive,
+                    ]}
+                  >
+                    {showBlur ? "Show Original" : "Hide Sensitive"}
+                  </Text>
+                </Pressable>
+
+                <Pressable style={styles.saveButton} onPress={saveRedacted}>
+                  <Text style={styles.saveButtonIcon}>💾</Text>
+                  <Text style={styles.saveButtonText}>Save</Text>
+                </Pressable>
+              </View>
+            )}
+          </View>
+        </View>
+      )}
+
+      {/* Results Summary */}
+      {results && (
+        <View style={styles.resultsSection}>
+          <Text style={styles.sectionTitle}>Detection Summary</Text>
+
+          <View style={styles.statsRow}>
+            <View style={styles.statCard}>
+              <Text style={styles.statNumber}>{results.boxes.length}</Text>
+              <Text style={styles.statLabel}>Words Found</Text>
+            </View>
+
+            <View style={styles.statCard}>
+              <Text style={[styles.statNumber, styles.sensitiveNumber]}>
+                {results.boxes.filter(isSensitiveBox).length}
+              </Text>
+              <Text style={styles.statLabel}>Sensitive Items</Text>
+            </View>
+
+            <View style={styles.statCard}>
+              <Text style={styles.statNumber}>
+                {Math.round(
+                  (results.boxes.filter((b) => (b.confidence || 0) > 80)
+                    .length /
+                    results.boxes.length) *
+                    100
+                )}
+                %
+              </Text>
+              <Text style={styles.statLabel}>Accuracy</Text>
+            </View>
+          </View>
+
+          {results.boxes.filter(isSensitiveBox).length > 0 && (
+            <View style={styles.sensitiveAlert}>
+              <Text style={styles.alertIcon}>⚠️</Text>
+              <View style={styles.alertContent}>
+                <Text style={styles.alertTitle}>
+                  Sensitive Information Detected
+                </Text>
+                <Text style={styles.alertDescription}>
+                  We found {results.boxes.filter(isSensitiveBox).length}{" "}
+                  potentially sensitive
+                  {results.boxes.filter(isSensitiveBox).length === 1
+                    ? " item"
+                    : " items"}{" "}
+                  that have been automatically blurred.
+                </Text>
+              </View>
+            </View>
+          )}
+
+          {/* Entity Types Found */}
+          <View style={styles.entitySection}>
+            <Text style={styles.entityTitle}>Detected Categories</Text>
+            <View style={styles.entityGrid}>
+              {Array.from(
+                new Set(
+                  results.boxes
+                    .filter(isSensitiveBox)
+                    .flatMap((box) => box.entities?.map((e) => e.entity) || [])
+                )
+              ).map((entityType, index) => (
+                <View key={index} style={styles.entityTag}>
+                  <Text style={styles.entityTagText}>{entityType}</Text>
+                </View>
+              ))}
+            </View>
+          </View>
+        </View>
+      )}
+
+      {/* Hidden OCR WebView - positioned absolutely to not affect layout */}
       <WebView
         ref={webviewRef}
         source={{ html }}
         onMessage={onWebViewMessage}
-        style={{ width: 0, height: 0, opacity: 0 }}
+        style={styles.hiddenWebView}
         originWhitelist={["*"]}
         javaScriptEnabled
         allowFileAccess
         allowUniversalAccessFromFileURLs
       />
-
-      <Button title="Pick image" onPress={pickImage} />
-      {imageUri ? (
-        <View
-          ref={redactionRef}
-          onLayout={(e) => setContainerW(e.nativeEvent.layout.width)}
-          style={{ width: "100%" }}
-        >
-          <View style={{ width: "100%", height: 220 }}>
-          {imageUri ? (
-            <>
-              <Image
-                source={{ uri: imageUri }}
-                style={{ width: "100%", height: "100%", borderRadius: 12 }}
-                resizeMode="contain"
-              />
-              {/* Blur overlays */}
-              {showBlur && results && results.boxes
-                .filter(isSensitiveBox)
-                .map((b, idx) => {
-                  const rect = projectBox(b.bbox, results.imageSize, containerW, containerH);
-                  return (
-                    <BlurView
-                      key={idx}
-                      intensity={65}         // raise if you want stronger blur
-                      tint="dark"
-                      style={{
-                        position: "absolute",
-                        left: rect.left,
-                        top: rect.top,
-                        width: rect.width,
-                        height: rect.height,
-                        borderRadius: 4,
-                        overflow: "hidden",
-                      }}
-                      pointerEvents="none"
-                    />
-                  );
-                })}
-            </>
-          ) : (
-            <Text style={{ opacity: 0.7 }}>No image selected</Text>
-          )}
-        </View>
-
-        {/* Controls */}
-        <View style={{ flexDirection: "row", gap: 12, marginTop: 10 }}>
-          <Button title={showBlur ? "Hide blur" : "Show blur"} onPress={() => setShowBlur((s) => !s)} />
-          <Button title="Save redacted PNG" onPress={saveRedacted} />
-        </View>
-      </View>
-      ) : (
-        <Text style={{ opacity: 0.7 }}>No image selected</Text>
-      )}
-
-      <Button title="Run OCR" onPress={runOCR} />
-      {isProcessing && <ActivityIndicator size="large" />}
-
-      <Text style={{ fontWeight: "600", marginTop: 8 }}>
-        OCR results (latest first):
-      </Text>
-      <FlatList
-        data={results ? [results] : []}
-        keyExtractor={(_, i) => i.toString()}
-        ItemSeparatorComponent={() => <View style={{ height: 10 }} />}
-        renderItem={({ item }) => (
-          <View style={{ padding: 12, borderWidth: 1, borderRadius: 10 }}>
-            <Text style={{ fontWeight: "600", marginBottom: 6 }}>Text</Text>
-            <Text>{item.text || "(empty result)"}</Text>
-            <Text style={{ marginTop: 8, fontWeight: "600" }}>Boxes</Text>
-            <Text>count: {item.boxes.length}</Text>
-            {/* Example of first box */}
-            {/* Output the result of the bounding boxes (first box as JSON) */}
-            {item.boxes[0] && (
-              <Text style={{ color: "#d2691e", marginBottom: 4 }}>
-                First bounding box: {JSON.stringify(item.boxes[0])}
-              </Text>
-            )}
-            {item.boxes[0] && (
-              <Text style={{ opacity: 0.7, marginTop: 4 }}>
-                first: &quot;{item.boxes[0].text}&quot; → (
-                {item.boxes[0].bbox.x0}, {item.boxes[0].bbox.y0}) - (
-                {item.boxes[0].bbox.x1}, {item.boxes[0].bbox.y1})
-              </Text>
-            )}
-          </View>
-        )}
-      />
-    </View>
+    </SafeAreaView>
   );
 }
+
+const { width: screenWidth } = Dimensions.get("window");
+const containerH = 280; // Updated height for better proportions
+
+const styles = StyleSheet.create({
+  container: {
+    flex: 1,
+    backgroundColor: "#f8fafc",
+    paddingHorizontal: 4,
+  },
+  hiddenWebView: {
+    position: "absolute",
+    top: -1000,
+    left: -1000,
+    width: 1,
+    height: 0,
+    opacity: 0,
+  },
+  scrollView: {
+    flex: 1,
+  },
+  scrollContent: {
+    paddingHorizontal: 24,
+    paddingTop: 16,
+    paddingBottom: 40,
+  },
+
+  // Header Styles
+  header: {
+    alignItems: "center",
+    marginBottom: 24,
+    paddingTop: 10,
+  },
+  headerIcon: {
+    width: 60,
+    height: 60,
+    borderRadius: 30,
+    backgroundColor: "#dbeafe",
+    alignItems: "center",
+    justifyContent: "center",
+    marginBottom: 12,
+    shadowColor: "#3b82f6",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.15,
+    shadowRadius: 8,
+    elevation: 4,
+  },
+  headerIconText: {
+    fontSize: 24,
+  },
+  title: {
+    fontSize: 24,
+    fontWeight: "800",
+    color: "#1f2937",
+    marginBottom: 6,
+    letterSpacing: -0.5,
+  },
+  subtitle: {
+    fontSize: 14,
+    color: "#6b7280",
+    textAlign: "center",
+    lineHeight: 20,
+    maxWidth: 260,
+  },
+
+  // Upload Area Styles
+  uploadArea: {
+    backgroundColor: "#ffffff",
+    borderRadius: 20,
+    padding: 24,
+    alignItems: "center",
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.08,
+    shadowRadius: 16,
+    elevation: 6,
+    borderWidth: 2,
+    borderColor: "#e5e7eb",
+    borderStyle: "dashed",
+    marginBottom: 20,
+  },
+  uploadContent: {
+    alignItems: "center",
+  },
+  uploadIconContainer: {
+    width: 80,
+    height: 80,
+    borderRadius: 40,
+    backgroundColor: "#f0f9ff",
+    alignItems: "center",
+    justifyContent: "center",
+    marginBottom: 16,
+  },
+  uploadIcon: {
+    fontSize: 32,
+  },
+  uploadTitle: {
+    fontSize: 18,
+    fontWeight: "700",
+    color: "#1f2937",
+    marginBottom: 6,
+  },
+  uploadDescription: {
+    fontSize: 13,
+    color: "#6b7280",
+    textAlign: "center",
+    marginBottom: 20,
+    lineHeight: 18,
+  },
+  uploadButton: {
+    backgroundColor: "#3b82f6",
+    paddingHorizontal: 24,
+    paddingVertical: 12,
+    borderRadius: 16,
+  },
+  uploadButtonText: {
+    color: "#ffffff",
+    fontSize: 16,
+    fontWeight: "600",
+  },
+
+  // Image Section Styles
+  imageSection: {
+    marginBottom: 24,
+  },
+  imageHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginBottom: 16,
+  },
+  sectionTitle: {
+    fontSize: 20,
+    fontWeight: "700",
+    color: "#1f2937",
+  },
+  changeButton: {
+    backgroundColor: "#f3f4f6",
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: "#d1d5db",
+  },
+  changeButtonText: {
+    color: "#374151",
+    fontSize: 14,
+    fontWeight: "500",
+  },
+  imageContainer: {
+    borderRadius: 20,
+    overflow: "hidden",
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.15,
+    shadowRadius: 20,
+    elevation: 8,
+    marginBottom: 20,
+  },
+  imageWrapper: {
+    width: "100%",
+    height: containerH,
+    backgroundColor: "#f9fafb",
+    borderRadius: 20,
+    overflow: "hidden",
+  },
+  selectedImage: {
+    width: "100%",
+    height: "100%",
+  },
+  blurOverlay: {
+    position: "absolute",
+    borderRadius: 8,
+    overflow: "hidden",
+    borderWidth: 2,
+    borderColor: "#ef4444",
+  },
+
+  // Action Section Styles
+  actionSection: {
+    gap: 16,
+  },
+  primaryButton: {
+    backgroundColor: "#3b82f6",
+    borderRadius: 20,
+    padding: 18,
+    shadowColor: "#3b82f6",
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.3,
+    shadowRadius: 12,
+    elevation: 8,
+  },
+  buttonDisabled: {
+    backgroundColor: "#9ca3af",
+    shadowColor: "#9ca3af",
+  },
+  buttonContent: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+  },
+  loadingContent: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 12,
+  },
+  buttonIcon: {
+    fontSize: 18,
+  },
+  buttonText: {
+    color: "#ffffff",
+    fontSize: 16,
+    fontWeight: "700",
+  },
+  controlsRow: {
+    flexDirection: "row",
+    gap: 12,
+  },
+  secondaryButton: {
+    flex: 1,
+    backgroundColor: "#f3f4f6",
+    borderRadius: 16,
+    padding: 16,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+    borderWidth: 2,
+    borderColor: "#e5e7eb",
+  },
+  secondaryButtonActive: {
+    backgroundColor: "#fef3c7",
+    borderColor: "#f59e0b",
+  },
+  secondaryButtonIcon: {
+    fontSize: 16,
+  },
+  secondaryButtonText: {
+    color: "#374151",
+    fontSize: 14,
+    fontWeight: "600",
+  },
+  secondaryButtonTextActive: {
+    color: "#92400e",
+  },
+  saveButton: {
+    backgroundColor: "#10b981",
+    borderRadius: 16,
+    paddingHorizontal: 20,
+    paddingVertical: 16,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    shadowColor: "#10b981",
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.2,
+    shadowRadius: 8,
+    elevation: 4,
+  },
+  saveButtonIcon: {
+    fontSize: 16,
+  },
+  saveButtonText: {
+    color: "#ffffff",
+    fontSize: 14,
+    fontWeight: "600",
+  },
+
+  // Results Section Styles
+  resultsSection: {
+    backgroundColor: "#ffffff",
+    borderRadius: 20,
+    padding: 24,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.08,
+    shadowRadius: 16,
+    elevation: 6,
+    marginTop: 8,
+  },
+  statsRow: {
+    flexDirection: "row",
+    gap: 12,
+    marginTop: 16,
+    marginBottom: 20,
+  },
+  statCard: {
+    flex: 1,
+    backgroundColor: "#f8fafc",
+    borderRadius: 16,
+    padding: 16,
+    alignItems: "center",
+    borderWidth: 1,
+    borderColor: "#e2e8f0",
+  },
+  statNumber: {
+    fontSize: 24,
+    fontWeight: "800",
+    color: "#1f2937",
+    marginBottom: 4,
+  },
+  sensitiveNumber: {
+    color: "#dc2626",
+  },
+  statLabel: {
+    fontSize: 12,
+    color: "#6b7280",
+    fontWeight: "500",
+    textAlign: "center",
+  },
+  sensitiveAlert: {
+    backgroundColor: "#fef2f2",
+    borderRadius: 16,
+    padding: 16,
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: 12,
+    marginBottom: 20,
+    borderWidth: 1,
+    borderColor: "#fecaca",
+  },
+  alertIcon: {
+    fontSize: 20,
+    marginTop: 2,
+  },
+  alertContent: {
+    flex: 1,
+  },
+  alertTitle: {
+    fontSize: 14,
+    fontWeight: "700",
+    color: "#991b1b",
+    marginBottom: 4,
+  },
+  alertDescription: {
+    fontSize: 13,
+    color: "#7f1d1d",
+    lineHeight: 18,
+  },
+  entitySection: {
+    marginTop: 8,
+  },
+  entityTitle: {
+    fontSize: 16,
+    fontWeight: "600",
+    color: "#1f2937",
+    marginBottom: 12,
+  },
+  entityGrid: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 8,
+  },
+  entityTag: {
+    backgroundColor: "#dbeafe",
+    borderRadius: 20,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderWidth: 1,
+    borderColor: "#93c5fd",
+  },
+  entityTagText: {
+    fontSize: 12,
+    color: "#1d4ed8",
+    fontWeight: "600",
+    textTransform: "uppercase",
+  },
+});
