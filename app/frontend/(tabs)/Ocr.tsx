@@ -1,13 +1,37 @@
 import * as FileSystem from "expo-file-system";
 import * as ImagePicker from "expo-image-picker";
 import React, { useMemo, useRef, useState } from "react";
-import { ActivityIndicator, Alert, Button, FlatList, Image, Text, View } from "react-native";
+import {
+  ActivityIndicator,
+  Alert,
+  Button,
+  FlatList,
+  Image,
+  Text,
+  View,
+} from "react-native";
 import WebView, { WebViewMessageEvent } from "react-native-webview";
+import { BlurView } from "expo-blur";
+import { captureRef } from "react-native-view-shot";
+import * as MediaLibrary from "expo-media-library";
+import { runNER } from "../services/ner";
 
 type OCRBox = {
   text: string;
   bbox: { x0: number; y0: number; x1: number; y1: number };
   confidence?: number;
+};
+
+type NEREntity = {
+  entity: string;
+  word: string;
+  score: number;
+  start: number;
+  end: number;
+};
+
+type OCRBoxWithNER = OCRBox & {
+  entities: NEREntity[];
 };
 
 type OCRResult = {
@@ -16,21 +40,106 @@ type OCRResult = {
   imageSize: { width: number; height: number };
 };
 
+type OCRResultWithNER = OCRResult & {
+  boxes: OCRBoxWithNER[];
+};
+
 type BridgeMsg =
   | { ok: true; ready?: true }
-  | { ok: true; text: string; boxes: OCRBox[]; imageSize: { width: number; height: number } }
+  | {
+      ok: true;
+      text: string;
+      boxes: OCRBox[];
+      imageSize: { width: number; height: number };
+    }
   | { ok: false; error: string };
 
 export default function Ocr() {
+  // UI state + a ref so we can export a redacted PNG
   const webviewRef = useRef<WebView>(null);
   const [imageUri, setImageUri] = useState<string | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
+  const redactionRef = useRef<View>(null);
+  const [showBlur, setShowBlur] = useState(true);
+  const [containerW, setContainerW] = useState(0);
+  const containerH = 220; // matches your <Image> height
 
+  const MIN_ENTITY_SCORE = 0.85;
+  const SENSITIVE_CATEGORIES = new Set([
+    "ACCOUNTNUM","BUILDINGNUM","CITY","CREDITCARDNUMBER","DATEOFBIRTH",
+    "DRIVERLICENSENUM","EMAIL","GIVENNAME","IDCARDNUM","PASSWORD","SOCIALNUM",
+    "STREET","SURNAME","TAXNUM","TELEPHONENUM","USERNAME","ZIPCODE"
+  ]);
+
+  function isSensitiveBox(b: OCRBoxWithNER) {
+    if (!b.entities || b.entities.length === 0) return false;
+    return b.entities.some(
+      (e) => SENSITIVE_CATEGORIES.has(e.entity) && (e.score ?? 0) >= MIN_ENTITY_SCORE
+    );
+  } 
+
+  // Compute the displayed image rectangle for resizeMode="contain"
+  function computeDisplayedRect(
+    containerW: number,
+    containerH: number,
+    imageW: number,
+    imageH: number
+  ) {
+    if (!imageW || !imageH) return { displayedW: containerW, displayedH: containerH, offsetX: 0, offsetY: 0 };
+    const imgR = imageW / imageH;
+    const boxR = containerW / containerH;
+    if (imgR > boxR) {
+      const displayedW = containerW;
+      const displayedH = displayedW / imgR;
+      return { displayedW, displayedH, offsetX: 0, offsetY: (containerH - displayedH) / 2 };
+    } else {
+      const displayedH = containerH;
+      const displayedW = displayedH * imgR;
+      return { displayedW, displayedH, offsetX: (containerW - displayedW) / 2, offsetY: 0 };
+    }
+  }
+
+  // Map original image pixels -> on-screen coords (with letterbox offsets)
+  function projectBox(
+    bbox: OCRBox["bbox"],
+    imgSize: { width: number; height: number },
+    containerW: number,
+    containerH: number
+  ) {
+    const { displayedW, displayedH, offsetX, offsetY } = computeDisplayedRect(
+      containerW, containerH, imgSize.width, imgSize.height
+    );
+    const sx = displayedW / imgSize.width;
+    const sy = displayedH / imgSize.height;
+
+    // Optional padding to ensure full coverage around glyphs
+    const pad = 2; // px in *display* space
+    const left = offsetX + bbox.x0 * sx - pad;
+    const top = offsetY + bbox.y0 * sy - pad;
+    const width = (bbox.x1 - bbox.x0) * sx + pad * 2;
+    const height = (bbox.y1 - bbox.y0) * sy + pad * 2;
+    return { left, top, width, height };
+  }
+
+  // Export the redacted composite (image + overlays) as a PNG
+  const saveRedacted = async () => {
+    try {
+      const uri = await captureRef(redactionRef, { format: "png", quality: 1, result: "tmpfile" });
+      const { status } = await MediaLibrary.requestPermissionsAsync();
+      if (status !== "granted") throw new Error("No media library permission");
+      await MediaLibrary.saveToLibraryAsync(uri);
+      Alert.alert("Saved", "Redacted image saved to your photos.");
+    } catch (e: any) {
+      Alert.alert("Save failed", String(e));
+    }
+  };
+  
   // Store full OCR results (text + bounding boxes)
-  const [results, setResults] = useState<OCRResult[]>([]);
+  const [results, setResults] = useState<OCRResultWithNER | null>(null);
 
   const html = useMemo(
-    () => `
+    () =>
+      `
 <!DOCTYPE html>
 <html>
 <head>
@@ -120,7 +229,9 @@ export default function Ocr() {
       const base64 = await FileSystem.readAsStringAsync(imageUri, {
         encoding: FileSystem.EncodingType.Base64,
       });
-      webviewRef.current?.postMessage(JSON.stringify({ cmd: "ocr", imageBase64: base64 }));
+      webviewRef.current?.postMessage(
+        JSON.stringify({ cmd: "ocr", imageBase64: base64 })
+      );
     } catch (e: any) {
       setIsProcessing(false);
       Alert.alert("Read error", String(e));
@@ -140,7 +251,9 @@ export default function Ocr() {
           boxes: payload.boxes || [],
           imageSize: payload.imageSize || { width: 0, height: 0 },
         };
-        setResults((prev) => [record, ...prev]); // latest first
+        runNERForBoxes(record).then((recordWithEntities: OCRResultWithNER) => {
+          setResults(recordWithEntities);
+        });
       } else if (!(msg as any).ok) {
         const err = (msg as any).error ?? "Unknown error";
         Alert.alert("OCR error", String(err));
@@ -152,18 +265,38 @@ export default function Ocr() {
     }
   };
 
+  // * Runs NER on each box's text and appends entities array
+  const runNERForBoxes = async (record: OCRResult) => {
+    const updatedBoxes: OCRBoxWithNER[] = [];
+
+    for (const box of record.boxes) {
+      try {
+        const entities = await runNER(box.text);
+        updatedBoxes.push({ ...box, entities: entities || [] });
+      } catch (error) {
+        console.error("NER error for box:", box, error);
+        updatedBoxes.push({ ...box, entities: [] });
+      }
+    }
+
+    return {
+      ...record,
+      boxes: updatedBoxes,
+    };
+  };
+
   // Optional: helper to scale boxes to your displayed Image size
   const scaleBoxes = (r: OCRResult, displayedW: number, displayedH: number) => {
     const sx = displayedW / r.imageSize.width;
     const sy = displayedH / r.imageSize.height;
-    return r.boxes.map(b => ({
+    return r.boxes.map((b) => ({
       ...b,
       bbox: {
         x0: b.bbox.x0 * sx,
         y0: b.bbox.y0 * sy,
         x1: b.bbox.x1 * sx,
         y1: b.bbox.y1 * sy,
-      }
+      },
     }));
   };
 
@@ -183,7 +316,54 @@ export default function Ocr() {
 
       <Button title="Pick image" onPress={pickImage} />
       {imageUri ? (
-        <Image source={{ uri: imageUri }} style={{ width: "100%", height: 220, resizeMode: "contain", borderRadius: 12 }} />
+        <View
+          ref={redactionRef}
+          onLayout={(e) => setContainerW(e.nativeEvent.layout.width)}
+          style={{ width: "100%" }}
+        >
+          <View style={{ width: "100%", height: 220 }}>
+          {imageUri ? (
+            <>
+              <Image
+                source={{ uri: imageUri }}
+                style={{ width: "100%", height: "100%", borderRadius: 12 }}
+                resizeMode="contain"
+              />
+              {/* Blur overlays */}
+              {showBlur && results && results.boxes
+                .filter(isSensitiveBox)
+                .map((b, idx) => {
+                  const rect = projectBox(b.bbox, results.imageSize, containerW, containerH);
+                  return (
+                    <BlurView
+                      key={idx}
+                      intensity={65}         // raise if you want stronger blur
+                      tint="dark"
+                      style={{
+                        position: "absolute",
+                        left: rect.left,
+                        top: rect.top,
+                        width: rect.width,
+                        height: rect.height,
+                        borderRadius: 4,
+                        overflow: "hidden",
+                      }}
+                      pointerEvents="none"
+                    />
+                  );
+                })}
+            </>
+          ) : (
+            <Text style={{ opacity: 0.7 }}>No image selected</Text>
+          )}
+        </View>
+
+        {/* Controls */}
+        <View style={{ flexDirection: "row", gap: 12, marginTop: 10 }}>
+          <Button title={showBlur ? "Hide blur" : "Show blur"} onPress={() => setShowBlur((s) => !s)} />
+          <Button title="Save redacted PNG" onPress={saveRedacted} />
+        </View>
+      </View>
       ) : (
         <Text style={{ opacity: 0.7 }}>No image selected</Text>
       )}
@@ -191,9 +371,11 @@ export default function Ocr() {
       <Button title="Run OCR" onPress={runOCR} />
       {isProcessing && <ActivityIndicator size="large" />}
 
-      <Text style={{ fontWeight: "600", marginTop: 8 }}>OCR results (latest first):</Text>
+      <Text style={{ fontWeight: "600", marginTop: 8 }}>
+        OCR results (latest first):
+      </Text>
       <FlatList
-        data={results}
+        data={results ? [results] : []}
         keyExtractor={(_, i) => i.toString()}
         ItemSeparatorComponent={() => <View style={{ height: 10 }} />}
         renderItem={({ item }) => (
@@ -202,16 +384,18 @@ export default function Ocr() {
             <Text>{item.text || "(empty result)"}</Text>
             <Text style={{ marginTop: 8, fontWeight: "600" }}>Boxes</Text>
             <Text>count: {item.boxes.length}</Text>
-              {/* Example of first box */}
-              {/* Output the result of the bounding boxes (first box as JSON) */}
-              {item.boxes[0] && (
-                <Text style={{ color: '#d2691e', marginBottom: 4 }}>
-                  First bounding box: {JSON.stringify(item.boxes[0])}
-                </Text>
-              )}
+            {/* Example of first box */}
+            {/* Output the result of the bounding boxes (first box as JSON) */}
+            {item.boxes[0] && (
+              <Text style={{ color: "#d2691e", marginBottom: 4 }}>
+                First bounding box: {JSON.stringify(item.boxes[0])}
+              </Text>
+            )}
             {item.boxes[0] && (
               <Text style={{ opacity: 0.7, marginTop: 4 }}>
-                first: "{item.boxes[0].text}" → ({item.boxes[0].bbox.x0}, {item.boxes[0].bbox.y0}) - ({item.boxes[0].bbox.x1}, {item.boxes[0].bbox.y1})
+                first: &quot;{item.boxes[0].text}&quot; → (
+                {item.boxes[0].bbox.x0}, {item.boxes[0].bbox.y0}) - (
+                {item.boxes[0].bbox.x1}, {item.boxes[0].bbox.y1})
               </Text>
             )}
           </View>
