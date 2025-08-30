@@ -1,7 +1,15 @@
 import * as FileSystem from "expo-file-system";
 import * as ImagePicker from "expo-image-picker";
 import React, { useMemo, useRef, useState } from "react";
-import { ActivityIndicator, Alert, Button, FlatList, Image, Text, View } from "react-native";
+import {
+  ActivityIndicator,
+  Alert,
+  Button,
+  FlatList,
+  Image,
+  Text,
+  View,
+} from "react-native";
 import WebView, { WebViewMessageEvent } from "react-native-webview";
 
 type OCRBox = {
@@ -10,15 +18,36 @@ type OCRBox = {
   confidence?: number;
 };
 
+type NEREntity = {
+  entity: string;
+  word: string;
+  score: number;
+  start: number;
+  end: number;
+};
+
+type OCRBoxWithNER = OCRBox & {
+  entities: NEREntity[];
+};
+
 type OCRResult = {
   text: string;
   boxes: OCRBox[];
   imageSize: { width: number; height: number };
 };
 
+type OCRResultWithNER = OCRResult & {
+  boxes: OCRBoxWithNER[];
+};
+
 type BridgeMsg =
   | { ok: true; ready?: true }
-  | { ok: true; text: string; boxes: OCRBox[]; imageSize: { width: number; height: number } }
+  | {
+      ok: true;
+      text: string;
+      boxes: OCRBox[];
+      imageSize: { width: number; height: number };
+    }
   | { ok: false; error: string };
 
 export default function Ocr() {
@@ -27,10 +56,11 @@ export default function Ocr() {
   const [isProcessing, setIsProcessing] = useState(false);
 
   // Store full OCR results (text + bounding boxes)
-  const [results, setResults] = useState<OCRResult[]>([]);
+  const [results, setResults] = useState<OCRResultWithNER | null>(null);
 
   const html = useMemo(
-    () => `
+    () =>
+      `
 <!DOCTYPE html>
 <html>
 <head>
@@ -120,7 +150,9 @@ export default function Ocr() {
       const base64 = await FileSystem.readAsStringAsync(imageUri, {
         encoding: FileSystem.EncodingType.Base64,
       });
-      webviewRef.current?.postMessage(JSON.stringify({ cmd: "ocr", imageBase64: base64 }));
+      webviewRef.current?.postMessage(
+        JSON.stringify({ cmd: "ocr", imageBase64: base64 })
+      );
     } catch (e: any) {
       setIsProcessing(false);
       Alert.alert("Read error", String(e));
@@ -140,7 +172,9 @@ export default function Ocr() {
           boxes: payload.boxes || [],
           imageSize: payload.imageSize || { width: 0, height: 0 },
         };
-        setResults((prev) => [record, ...prev]); // latest first
+        runNERForBoxes(record).then((recordWithEntities: OCRResultWithNER) => {
+          setResults(recordWithEntities);
+        });
       } else if (!(msg as any).ok) {
         const err = (msg as any).error ?? "Unknown error";
         Alert.alert("OCR error", String(err));
@@ -152,18 +186,44 @@ export default function Ocr() {
     }
   };
 
+  // * Runs NER on each box's text and appends entities array
+  const runNERForBoxes = async (record: OCRResult) => {
+    const updatedBoxes: OCRBoxWithNER[] = [];
+
+    for (const box of record.boxes) {
+      try {
+        const res = await fetch("http://localhost:8000/ner", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ text: box.text }),
+        });
+        const data = await res.json();
+
+        updatedBoxes.push({ ...box, entities: data.entities || [] });
+      } catch (error) {
+        console.error("NER error for box:", box, error);
+        updatedBoxes.push({ ...box, entities: [] });
+      }
+    }
+
+    return {
+      ...record,
+      boxes: updatedBoxes,
+    };
+  };
+
   // Optional: helper to scale boxes to your displayed Image size
   const scaleBoxes = (r: OCRResult, displayedW: number, displayedH: number) => {
     const sx = displayedW / r.imageSize.width;
     const sy = displayedH / r.imageSize.height;
-    return r.boxes.map(b => ({
+    return r.boxes.map((b) => ({
       ...b,
       bbox: {
         x0: b.bbox.x0 * sx,
         y0: b.bbox.y0 * sy,
         x1: b.bbox.x1 * sx,
         y1: b.bbox.y1 * sy,
-      }
+      },
     }));
   };
 
@@ -183,7 +243,15 @@ export default function Ocr() {
 
       <Button title="Pick image" onPress={pickImage} />
       {imageUri ? (
-        <Image source={{ uri: imageUri }} style={{ width: "100%", height: 220, resizeMode: "contain", borderRadius: 12 }} />
+        <Image
+          source={{ uri: imageUri }}
+          style={{
+            width: "100%",
+            height: 220,
+            resizeMode: "contain",
+            borderRadius: 12,
+          }}
+        />
       ) : (
         <Text style={{ opacity: 0.7 }}>No image selected</Text>
       )}
@@ -191,9 +259,11 @@ export default function Ocr() {
       <Button title="Run OCR" onPress={runOCR} />
       {isProcessing && <ActivityIndicator size="large" />}
 
-      <Text style={{ fontWeight: "600", marginTop: 8 }}>OCR results (latest first):</Text>
+      <Text style={{ fontWeight: "600", marginTop: 8 }}>
+        OCR results (latest first):
+      </Text>
       <FlatList
-        data={results}
+        data={results ? [results] : []}
         keyExtractor={(_, i) => i.toString()}
         ItemSeparatorComponent={() => <View style={{ height: 10 }} />}
         renderItem={({ item }) => (
@@ -202,16 +272,18 @@ export default function Ocr() {
             <Text>{item.text || "(empty result)"}</Text>
             <Text style={{ marginTop: 8, fontWeight: "600" }}>Boxes</Text>
             <Text>count: {item.boxes.length}</Text>
-              {/* Example of first box */}
-              {/* Output the result of the bounding boxes (first box as JSON) */}
-              {item.boxes[0] && (
-                <Text style={{ color: '#d2691e', marginBottom: 4 }}>
-                  First bounding box: {JSON.stringify(item.boxes[0])}
-                </Text>
-              )}
+            {/* Example of first box */}
+            {/* Output the result of the bounding boxes (first box as JSON) */}
+            {item.boxes[0] && (
+              <Text style={{ color: "#d2691e", marginBottom: 4 }}>
+                First bounding box: {JSON.stringify(item.boxes[0])}
+              </Text>
+            )}
             {item.boxes[0] && (
               <Text style={{ opacity: 0.7, marginTop: 4 }}>
-                first: "{item.boxes[0].text}" → ({item.boxes[0].bbox.x0}, {item.boxes[0].bbox.y0}) - ({item.boxes[0].bbox.x1}, {item.boxes[0].bbox.y1})
+                first: &quot;{item.boxes[0].text}&quot; → (
+                {item.boxes[0].bbox.x0}, {item.boxes[0].bbox.y0}) - (
+                {item.boxes[0].bbox.x1}, {item.boxes[0].bbox.y1})
               </Text>
             )}
           </View>
