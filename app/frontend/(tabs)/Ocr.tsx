@@ -11,6 +11,7 @@ import {
   View,
 } from "react-native";
 import WebView, { WebViewMessageEvent } from "react-native-webview";
+import { runNER } from "../services/ner";
 
 type OCRBox = {
   text: string;
@@ -192,14 +193,8 @@ export default function Ocr() {
 
     for (const box of record.boxes) {
       try {
-        const res = await fetch("http://localhost:8000/ner", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ text: box.text }),
-        });
-        const data = await res.json();
-
-        updatedBoxes.push({ ...box, entities: data.entities || [] });
+        const entities = await runNER(box.text);
+        updatedBoxes.push({ ...box, entities: entities || [] });
       } catch (error) {
         console.error("NER error for box:", box, error);
         updatedBoxes.push({ ...box, entities: [] });
