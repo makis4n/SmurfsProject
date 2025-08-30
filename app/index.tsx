@@ -1,4 +1,5 @@
 import { Text, TouchableOpacity, View } from "react-native";
+import { router } from "expo-router";
 
 export default function Index() {
   return (
@@ -9,7 +10,7 @@ export default function Index() {
         alignItems: "center",
       }}
     >
-      <TouchableOpacity>
+      <TouchableOpacity onPress={() => router.replace("./frontend/(tabs)/camera")}>
         <Text>Get Started</Text>
       </TouchableOpacity>
     </View>
