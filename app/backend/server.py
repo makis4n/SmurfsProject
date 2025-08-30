@@ -26,4 +26,4 @@ def ner_endpoint(input: InputText):
         "end": int(r["end"])
       })
     print(results)
-    return {"embedding": results}
+    return {"entities": results}

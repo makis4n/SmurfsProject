@@ -1,6 +1,13 @@
-import React, { useEffect, useState } from "react";
-import { View, Text, FlatList, Image, TouchableOpacity, StyleSheet } from "react-native";
 import * as MediaLibrary from "expo-media-library";
+import React, { useEffect, useState } from "react";
+import {
+  FlatList,
+  Image,
+  StyleSheet,
+  Text,
+  TouchableOpacity,
+  View,
+} from "react-native";
 
 export default function Photos() {
   const [photos, setPhotos] = useState<MediaLibrary.Asset[]>([]);
