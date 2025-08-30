@@ -1,51 +1,59 @@
-# Welcome to your Expo app 👋
 
-This is an [Expo](https://expo.dev) project created with [`create-expo-app`](https://www.npmjs.com/package/create-expo-app).
+Problem Statement
 
-## Get started
+In today’s digital world, photos often contain personally identifiable information (PII) such as names, email addresses, ID numbers, or phone numbers. Sharing these images without proper safeguards exposes individuals to privacy and security risks. Current tools require manual editing, which is time-consuming and prone to error.
+ Our app solves this by automatically detecting and blurring sensitive information in photos, enabling users to share images safely and confidently.
+Features & Functionality
+Automatic Text Extraction: Uses OCR (Optical Character Recognition) to detect text from photos.
 
-1. Install dependencies
 
-   ```bash
-   npm install
-   ```
+Entity Recognition: Applies a BERT-based Named Entity Recognition (NER) model to identify sensitive entities such as emails, IDs, usernames, and phone numbers.
 
-2. Start the app
 
-   ```bash
-   npx expo start
-   ```
+Privacy Blurring: Dynamically blurs detected sensitive text regions in the photo.
 
-In the output, you'll find options to open the app in a
 
-- [development build](https://docs.expo.dev/develop/development-builds/introduction/)
-- [Android emulator](https://docs.expo.dev/workflow/android-studio-emulator/)
-- [iOS simulator](https://docs.expo.dev/workflow/ios-simulator/)
-- [Expo Go](https://expo.dev/go), a limited sandbox for trying out app development with Expo
+On-Device Processing: Keeps sensitive data local during analysis, reducing privacy risks.
 
-You can start developing by editing the files inside the **app** directory. This project uses [file-based routing](https://docs.expo.dev/router/introduction).
 
-## Get a fresh project
+User-Friendly Workflow: Import a photo, run detection, preview blur results, and save/share securely.
+Development Tools
+TypeScript – For strong typing and maintainability.
 
-When you're ready, run:
 
-```bash
-npm run reset-project
-```
+Expo Go (React Native framework) – To rapidly test and iterate mobile features.
 
-This command will move the starter code to the **app-example** directory and create a blank **app** directory where you can start developing.
 
-## Learn more
+VS Code – Primary IDE for coding and debugging.
 
-To learn more about developing your project with Expo, look at the following resources:
 
-- [Expo documentation](https://docs.expo.dev/): Learn fundamentals, or go into advanced topics with our [guides](https://docs.expo.dev/guides).
-- [Learn Expo tutorial](https://docs.expo.dev/tutorial/introduction/): Follow a step-by-step tutorial where you'll create a project that runs on Android, iOS, and the web.
+Git & GitHub – Version control and collaboration.
 
-## Join the community
 
-Join our community of developers creating universal apps.
+APIs Used
+Custom Backend API for running the BERT model and returning detected entities.
 
-- [Expo on GitHub](https://github.com/expo/expo): View our open source platform and contribute.
-- [Discord community](https://chat.expo.dev): Chat with Expo users and ask questions.
-# SmurfsProject
+
+Expo APIs (e.g., ImagePicker, MediaLibrary) for photo import/export and storage.
+
+
+Assets Used
+Sample photo datasets for testing OCR and blurring accuracy.
+
+
+Icon sets and UI assets for user interface polish.
+
+
+Libraries Used
+Tesseract.js – For OCR to extract text from photos.
+
+
+BERT (via HuggingFace Transformers / custom API) – For Named Entity Recognition (NER) to detect PII.
+
+
+React Native View Shot & Expo Blur – To capture and blur sensitive areas dynamically.
+
+
+Expo FileSystem & MediaLibrary – For image storage and saving results.
+
+
